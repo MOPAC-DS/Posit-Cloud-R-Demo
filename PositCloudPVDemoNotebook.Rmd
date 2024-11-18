@@ -1,0 +1,452 @@
+---
+title: "Police Data Analysis with R - PV Demo"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+## Introduction
+
+In this R Notebook we will familiarise ourselves with the Cloud based
+alternative to RStudio Desktop, provided by Posit Cloud, through exploring 
+real-world crime data obtained from the police.uk website as well as connecting
+to MOPACs Database to simulate a variety of use cases.
+
+Where you see `{???}` enter the code to make the script work!
+
+
+## Setup: Load Necessary Libraries
+
+We start by loading all of the packages that will be used in this Notebook.
+
+```{r, echo = FALSE}
+
+#Create a function to load packages and install any missing packages
+load_package <- function(package_name) {
+  if (!require(package_name, character.only = TRUE)) {
+    install.packages(package_name, dependencies = TRUE)
+    library(package_name, character.only = TRUE)
+  }
+}
+
+# Load (and install if not already) libraries
+load_package("tidyverse")       # for data manipulation and plotting
+load_package("dplyr")           # for data manipulation pipelines
+load_package("sf")              # for working with spatial data (maps)
+load_package("ggspatial")       # for enhancing ggplot maps
+load_package("leaflet")         # for interactive maps
+load_package("leaflet.extras")  # for leaflet addons!
+load_package("DBI")             # for database connections
+load_package("RPostgres")       # PostgreSQL driver
+load_package("shiny")           # for interactive dashboards
+
+
+```
+
+## Getting Data from Police.uk
+
+For the first part of this tutorial we will use data published at
+https://data.police.uk/data/
+
+1. Visit https://data.police.uk/data/ and download data for the Metropolitan
+Police Service (MPS) for September 2024.
+2. Click `Upload` in the `Files ` pane to upload this to your project space.
+
+(Challenge: Can you use the Police.UK API to load this data?)
+
+```{r}
+# Load the CSV file
+df_crime <- {???}
+  
+# Check the first few rows
+head(df_crime)
+```
+
+
+### Summarise the Data
+
+Use R's built in functions to identify the data type of each column. Then
+produce descriptive statistics for each column.
+
+```{r}
+# View the structure of the dataset
+{???}
+
+#Produce descriptive statistics for each of the columns of the dataset
+{???}
+```
+
+
+### Crime Type Counts
+
+The data contains crime records and each record has an associated crime type.
+Identify the column of interest and produce a simple summary of the counts
+for each crime type.
+
+Which Crime Type is least prevalent?
+
+Hint: You may want to change the column type.
+
+```{r}
+#Convert column type
+{???}
+
+# Summarise crime types
+summary_crime <- df_crime %>%
+  group_by({???}) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+# Show the summarised data
+print(summary_crime)
+```
+
+
+Let us display this in a more visually appealing way! Use a Bar Chart to convey
+the above information in a more concise manner.
+
+```{r}
+# Plotting a bar chart of crime types
+ggplot(summary_crime, aes(x = reorder({???}, -count), y = count)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +
+  labs(title = "Crime Type Frequencies in London* (September 2024)",
+       x = "Crime Type", 
+       y = "Frequency",
+       caption = "*Excluding City of London") +
+  theme_minimal()
+```
+
+### Map of Crimes
+
+We can use R to create a spatial mapping of each of the crimes recorded by the
+Metropolitan Police Service.
+
+In the below example we have used the leaflet library which is designed for
+creating interactive maps for dashboards.
+
+Mapping a 3-Dimensional World on a 2-D Map requires a method (projection) for
+flattening this with minimal distortion. Leaflet uses WGS 84 (World Geodetic
+System 1984) which is used in GPS Navigation Systems. Find the appropriate EPSG
+CRS code.
+
+```{r}
+#Let us convert the dataframe into a spatial dataframe
+# We use the Longituide and Latitude, making sure to specify the correct
+# coordinate reference system.
+
+sf_crime <- st_as_sf(df_crime, coords = c("Longitude", "Latitude"), crs = {???})
+
+# Plot a map of crime locations
+leaflet(sf_crime) %>%
+  addTiles() %>%
+  addCircleMarkers(radius = 3, color = "red", opacity = 0.6, fillOpacity = 0.8,
+                   popup = ~Crime.type) %>%
+  # Add a scale bar
+  addScaleBar(position = "bottomleft") %>%
+  
+  # Add a title using a custom control
+  addControl('<div style="font-size: 20px; font-weight: bold; color: #333; background-color: rgba(255, 255, 255, 0.7); padding: -px; border-radius: 5px;"></div>',
+             position = "topleft")
+```
+
+We can see that the crimes are spread across the United Kingdom. We can filter
+these to those committed in London using a ShapeFile.
+
+1. Use the London DataStore to download the LSOA boundary files for London.
+Note that you will need the `statistical-gis-boundaries-london.zip` file.
+https://data.london.gov.uk/dataset/statistical-gis-boundary-files-london
+2. Extract the downloaded folder on your local system.
+3. Create a "New Folder" in the `Files` pane called LSOA_ShapeFiles.
+4. Upload all of the files in the ESRI folder that begin with `LSOA_2011_*`
+
+
+```{r}
+#Load the London LSOA Shapefile
+sf_lsoa_ldn <- st_read({???})
+
+# Ensure both the crime data and London boundary are in the same CRS
+sf_crime <- st_transform(sf_crime, crs = {???})
+sf_lsoa_ldn <- st_transform(sf_lsoa_ldn, crs = {???})
+
+## When we transform geometries it can result in inconsistencies
+# Check if there are invalid geometries
+valid_geom <- st_is_valid(sf_lsoa_ldn)
+
+# If any geometries are invalid, attempt to fix them
+if (any(!valid_geom)) {
+  sf_lsoa_ldn <- st_make_valid(sf_lsoa_ldn)
+}
+
+# Filter the crime data to only include points within London
+sf_crime_london <- sf_crime[sf_lsoa_ldn, ]
+
+# Plot the map with filtered data for London
+    # Hint: Use the code above as a template
+{???}
+
+```
+
+
+Its a blurry mess! Let us try and make this more meaningful.
+
+You could try repeating the above code but with a reduced opacity. Alternatively
+we can convert this into a heatmap to identify the key problem areas.
+
+What do the majority of "cold spots" have in common?
+
+```{r}
+# Extract latitude and longitude as a data frame
+heatmap_data <- st_coordinates(sf_crime_london)  # Extracts lat, lon as matrix
+
+# Create a leaflet map with a heatmap
+leaflet() %>%
+  addTiles() %>%
+  addHeatmap(lng = heatmap_data[, 1], lat = heatmap_data[, 2], intensity = 1, 
+             radius = 10, blur = 20, max = 0.05) %>%
+  # Add a scale bar
+  addScaleBar(position = "bottomleft")
+
+```
+
+Hey! It looks pretty but is it meaningful? Let's try to make something
+insightful! This time let us use the ggplot library.
+
+The leaflet library is designed to create interactive maps that can be
+incorporated into interactive dashboards. This means they are designed to be
+supported by other features such as external titles. GGplot provides us with
+greater customisation for fixed plots.
+
+```{r}
+# Because there are lots of LSOA aggregating data can be time consuming
+# we will therefore change from a dataframe to a data.table
+
+# Load data.table library
+library(data.table)
+
+# Convert sf_crime_london to data.table
+{???}
+
+# Perform aggregation
+crime_aggregated <- sf_crime_london[, .(crime_count = .N), by = .(LSOA.code, Crime.type)]
+
+# Merge the aggregated crime data with LSOA boundaries
+     # Hint: Find the column names in each dataframe/table you want to join
+lsoas_with_crime <- sf_lsoa_ldn %>%
+  left_join(crime_aggregated, by = c({???} = {???}))
+
+# Create plot using ggplot
+ggplot(data = lsoas_with_crime) +
+  geom_sf(aes(fill = crime_count), color = "black", size = 0.1) +
+  scale_fill_viridis_c(option = "plasma", name = "Crime Count") +  # Color scale
+  labs(title = "Crime Count by LSOA in London for September 2024") +
+  theme_minimal() + 
+  theme(legend.position = "none") + 
+  annotation_scale(location = "br", width_hint = 0.2) +  # Add scale bar
+  annotation_north_arrow(location = "topright", 
+                         width = unit(1, "cm"), height = unit(1, "cm"))
+
+```
+
+
+Still, not very meaningful, let us take the logarithm of the counts to better
+distinguish between the small values!
+
+Recreate the above graph adjusting the data source and relevant titles to
+reflect this change.
+
+```{r}
+# Apply a log transformation to the crime_count to make the map more informative
+lsoas_with_crime$log_crime_count <- log(lsoas_with_crime$crime_count + 1)  # +1 to avoid log(0)
+
+
+# Create plot using ggplot
+    # Hint: Use the code above as a template.
+
+{???}
+```
+
+
+If you want interactive elements where you can click each geographic area in
+order to view its various features we can repeat this using leaflet.
+
+```{r}
+
+# Create a color palette based on crime_count
+pal <- colorNumeric(palette = "YlOrRd", domain = lsoas_with_crime$log_crime_count)
+
+# Create the leaflet map with a choropleth
+leaflet(lsoas_with_crime) %>%
+  addTiles() %>%
+  addPolygons(fillColor = ~pal(log_crime_count), weight = 1, opacity = 1,
+              color = "black", fillOpacity = 0.7,
+              popup = ~paste("LSOA: ", LSOA11CD, "<br>Log Crime Count: ", log_crime_count)) %>%
+  addLegend(pal = pal, values = ~log_crime_count, title = "Log(Crime Count)",
+            position = "bottomright") %>%
+  addScaleBar(position = "bottomleft")
+  
+
+```
+
+
+
+## Using the MOPAC Database
+
+Now we will use the crime data stored in the MOPAC database, which is obtained
+through MetBox, to create a time-series plot.
+
+### Create Credentials File
+It is bad practice to use credentials within a script. We always store these in
+a separate file to prevent the credentials from being accidentally leaked.
+
+1. Click "New Blank File"
+2. Name it `.env`
+3. Inside the file, paste the following, replacing `your_host` etcetera with the
+credentials provided in person.
+4. Make sure your file has a blank new line at the end.
+
+
+```{bash}
+DB_HOST='your_host'
+DB_PORT='your_port'
+DB_NAME='your_database'
+DB_USER='your_username'
+DB_PASSWORD='your_password'
+
+```
+
+
+### Connect to MOPAC DB
+
+The following code uses your `.env` file to create a connection to the MOPAC DB.
+
+```{r}
+
+# Load credentials
+library(dotenv)
+dotenv::load_dot_env(".env")
+
+# Establish connection to database
+con <- dbConnect(
+  RPostgres::Postgres(),
+  host = Sys.getenv("DB_HOST"),
+  port = Sys.getenv("DB_PORT"),
+  dbname = Sys.getenv("DB_NAME"),
+  user = Sys.getenv("DB_USER"),
+  password = Sys.getenv("DB_PASS")
+)
+```
+
+
+Databases contain tables and these are stored in collections called schemas. The
+MOPAC DB stores our main data in a schema called `mopacdb_analytic`. Inside this
+schema is a table called `met_offences`.
+
+You can explore the structure of our database here:
+https://dbdocs.io/dhammo2/mopacdb
+
+Let us first run a query to identify all of the ward names within the
+`met_offences` table.
+
+```{r}
+
+#Create a Query to Identify Distinct Entries in ward_name column
+query <- "SELECT DISTINCT ward_name FROM mopacdb_analytic.met_offences;"
+
+# Run the query
+ward_names <- dbGetQuery(con, query)
+
+# Check the first few rows of the data
+head(ward_names)
+```
+
+
+We will now pull all of the crime data for 2023 for a Ward of your choice!
+
+Replace `Abbery Road` with the name of a ward in your ward_names variable and
+set the Year as `2023`.
+
+```{r}
+
+#Create a Query to Identify Distinct Entries in ward_name column
+query <- "SELECT *
+          FROM mopacdb_analytic.met_offences
+          WHERE to_char(committed_from_date, 'YYYY') = {???}
+          AND ward_name = {???};
+          "
+
+# Run the query
+data_crime_db <- {???}
+
+# Check the first few rows of the data
+head(data_crime_db)
+```
+
+
+### Time Series Plot
+
+Now that we have sourced the relevant crime data from the MOPAC DB we can
+aggregate it to create a time-series plot.
+
+```{r}
+
+# Convert committed_from_date to Date type if not already
+data_crime_db$committed_from_date <- {???}
+
+# Create a 'week' and 'year' column for aggregation
+data_crime_db <- data_crime_db %>%
+  mutate(week = week(committed_from_date),
+         year = year(committed_from_date))
+
+# Aggregate the data by year and week
+crime_weekly <- data_crime_db %>%
+  group_by(year, week) %>%
+  summarise(crime_count = n(), .groups = 'drop')
+
+# Create a time series plot
+ggplot(crime_weekly, aes(x = as.Date(paste(year, week, 1, sep = "-"), format = "%Y-%U-%u"), y = crime_count)) +
+  geom_line() +
+  labs(title = "Weekly Crime Count in {???}",
+       x = "Week",
+       y = "Crime Count") +
+  theme_minimal() +
+  scale_x_date(date_labels = "%b %d, %Y", date_breaks = "4 weeks") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+```
+## Conclusion
+
+This notebook demonstrated the power and versatility of R and Posit Cloud in
+analysing crime data from multiple sources, including publicly available data
+from Police.uk and the MOPAC database. Through this analysis, we:
+
+1. Explored and Summarised Crime Data: We loaded real-world crime data, examined
+its structure, and identified trends in crime types using summary statistics and
+visualisations.
+
+2. Visualised Crime Data Geographically: By creating spatial maps with tools
+like Leaflet and ggplot, we gained insights into the geographical distribution
+of crimes, highlighting areas of concern and presenting data in both static and
+interactive formats.
+
+3. Connected to a Database for Advanced Analysis: Using secure database
+credentials, we queried the MOPAC database to explore trends over time in
+specific wards. We visualised this data through a time-series plot, providing a
+dynamic view of crime trends.
+
+4. Enhanced Interpretability with Transformations and Aggregations: By applying
+log transformations and aggregations, we made large datasets more comprehensible
+and insightful.
+
+This notebook illustrates how R's ecosystem can integrate multiple data sources,
+transform and visualise data, and create meaningful insights for
+decision-making. Future extensions could include predictive modeling,
+integrating external socio-economic factors, and building interactive dashboards
+for continuous monitoring.
+
+Through Posit Cloud, this analysis becomes accessible to MOPAC employees,
+enabling collaborative, cloud-based data science without requiring a local setup
+on restricted devices.
