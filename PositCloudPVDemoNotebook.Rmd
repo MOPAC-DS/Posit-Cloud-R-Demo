@@ -20,7 +20,7 @@ Where you see `{???}` enter the code to make the script work!
 
 We start by loading all of the packages that will be used in this Notebook.
 
-```{r, echo = FALSE}
+```{r, echo = FALSE, results ='hide'}
 
 #Create a function to load packages and install any missing packages
 load_package <- function(package_name) {
